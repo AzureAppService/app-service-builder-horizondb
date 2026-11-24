@@ -2,7 +2,7 @@
 
 Fieldnotes compares keyword and hybrid retrieval over fictional field-support guides. It is a Node.js sample for Azure HorizonDB and App Service Builder, not a production troubleshooting service. Use synthetic data and queries only.
 
-> **Preview status:** The HorizonDB-specific Entra token audience and the procedure for mapping a managed identity to a database login must be verified for the target cluster before this sample can be deployed. PostgreSQL compatibility alone does not establish either detail. Hosted identity and retrieval have not yet been verified by this repository.
+> **Preview status:** The target HorizonDB portal's `oss-rdbms` token resource, administrator TLS login and non-admin managed-identity principal mapping are verified on a dedicated test cluster. Live keyword queries under the mapped role return real `fulltext` matches; wrong-identity login is rejected. This role-level check is not a hosted managed-identity login. Hosted identity and hybrid retrieval remain unverified pending native Builder confirmations and user acceptance of managed-model terms. Verify the current service contract on your own cluster; PostgreSQL compatibility alone does not establish it.
 
 ## What it does
 
@@ -18,7 +18,7 @@ The public sample has no visitor sign-in. Its in-process request and concurrency
 
 1. Node.js 24 and npm.
 2. A dedicated Azure HorizonDB cluster and database with Microsoft Entra authentication and an available compute pool. Follow the [cluster quickstart](https://learn.microsoft.com/azure/horizondb/configure-maintain/quickstart-create-cluster) and [Entra configuration guidance](https://learn.microsoft.com/azure/horizondb/security/security-microsoft-entra-how-to-configure).
-3. [AI Model Management](https://learn.microsoft.com/azure/horizondb/ai/ai-model-management) enabled, with its terms reviewed as required, and `default-embedding`, `default-chat`, and `default-reranker` available. The feature is in preview and provisions managed models. Model usage is billed.
+3. For hybrid setup, [AI Model Management](https://learn.microsoft.com/azure/horizondb/ai/ai-model-management) enabled, with its terms accepted by the user as required, and `default-embedding`, `default-chat`, and `default-reranker` available. The feature is in preview and provisions managed models. Model usage is billed. The keyword-only bootstrap makes no model calls and does not change model access.
 4. A dedicated pool parameter group that allows `vector`, `pg_diskann`, `pg_textsearch`, and `azure_ai`, and preloads `pg_textsearch` in `shared_preload_libraries`. Preserve any existing required values, apply the group, and restart when required. See [allow extensions](https://learn.microsoft.com/azure/horizondb/extensions/how-to-allow-extensions) and [full-text search](https://learn.microsoft.com/azure/horizondb/ai/full-text-search).
 5. An `azure_ai` version that provides `ai.search()` and the documented `ai.embed()` interface; the current [AI search documentation](https://learn.microsoft.com/azure/horizondb/ai/ai-search) targets the newer `ai` schema. Confirm the installed function signatures and model access on the actual database.
 6. A user-assigned managed identity attached **to the app**, plus a matching non-administrator database login created by a HorizonDB Entra administrator. An identity attached to the HorizonDB cluster for another service feature is not the app's identity. The runtime principal must not be a database administrator.
@@ -33,7 +33,7 @@ Builder Connections does not currently configure HorizonDB for this sample. Conf
 | `AZURE_CLIENT_ID` | Client ID of the user-assigned identity attached to the app |
 | `HORIZONDB_TOKEN_SCOPE` | Verified HorizonDB Entra resource scope ending in `/.default` |
 
-The current public HorizonDB identity overview describes token authentication but does not specify the token scope or an exact SQL principal-mapping command. Obtain those details from the cluster's current supported guidance and verify a real login; do not assume the Azure Database for PostgreSQL Flexible Server audience or principal helper is interchangeable. The sample intentionally has no guessed default scope, password fallback, or developer-credential fallback at runtime.
+The tested HorizonDB Connect page prescribes `az account get-access-token --resource-type oss-rdbms`, resolving in AzureCloud to `https://ossrdbms-aad.database.windows.net`. Set the corresponding scope to `https://ossrdbms-aad.database.windows.net/.default` after checking your cluster's current guidance. On the tested cluster, `pgaadauth` 1.12 exposes `pgaadauth_create_principal_with_oid(rolename text, objectid text, objecttype text, isadmin boolean, ismfa boolean, tenantid text, skipvalidation boolean)`. An administrator created the application login in `postgres` using its verified managed-identity **principal/object ID**, type `service`, both privilege flags false, the verified tenant ID and `skipvalidation=false`, then verified the returned mapping and role privileges. This does not yet prove an actual managed-identity login. Inspect the installed signature before applying it elsewhere; never disable directory validation to hide an error. The runtime intentionally has no guessed default scope, password fallback or developer-credential fallback.
 
 ## Bootstrap the dedicated database
 
@@ -45,6 +45,18 @@ export HORIZONDB_RUNTIME_ROLE="$HORIZONDB_USER"
 export HORIZONDB_CONFIRM_DATABASE="$HORIZONDB_DATABASE"
 npm run db:bootstrap
 ```
+
+Alternatively, stage setup while model terms are pending:
+
+```sh
+npm run db:bootstrap:keyword
+# After the user accepts model terms and the managed models are ready:
+npm run db:bootstrap:embeddings
+```
+
+The keyword stage creates the schema, 14 synthetic text guides, a BM25 index and search permissions. Embeddings remain SQL NULL; it creates no DiskANN index, calls no models and changes no model user lists. Hybrid search explicitly reports its missing vector index. Embedding completion requires the exact unchanged, entirely unembedded synthetic collection; it refuses modified or partial data, generates real vectors, enforces non-null embeddings and creates DiskANN before applying model permissions. It does not overwrite or reseed existing text. Each stage is transactional, though an aborted embedding transaction may still incur inference charges.
+
+On the test cluster with managed models disabled, `DEMO-104` and `requests wait for a free session` both ranked the synthetic pool-wait guide first with `match_type=fulltext`; a nonexistent term returned no guides. The mapped role could select but had no insert, update, delete, schema-create or database-create permissions. Hybrid correctly reported its missing DiskANN index. These checks do not establish hosted identity or semantic retrieval quality.
 
 The runtime login must already exist and must not have administrator, role-creation, database-creation, superuser, or replication privileges. Bootstrap refuses to overwrite an existing `guide_finder` schema. It creates extensions when allowed, inserts 14 synthetic guides and their embeddings, creates BM25 and DiskANN indexes, and grants the runtime principal schema usage, guide `SELECT`, and the documented search/embedding function access. It changes managed-model user lists: the embedding model is limited to the administrator and runtime login, while the managed chat and reranking models are limited to the administrator. **Do not run it against a shared cluster or database.** Review existing model access and service-side effects first.
 

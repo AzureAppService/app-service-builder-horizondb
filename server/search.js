@@ -8,7 +8,7 @@ const TOP_K = 5;
 const INDEX_SQL = `
   SELECT am.amname,
          ARRAY(
-           SELECT attribute.attname
+           SELECT attribute.attname::text
            FROM unnest(index_info.indkey) WITH ORDINALITY AS key(attnum, position)
            JOIN pg_attribute AS attribute
              ON attribute.attrelid = index_info.indrelid AND attribute.attnum = key.attnum
@@ -16,7 +16,7 @@ const INDEX_SQL = `
            ORDER BY key.position
          ) AS columns,
          ARRAY(
-           SELECT opclass.opcname
+           SELECT opclass.opcname::text
            FROM unnest(index_info.indclass) WITH ORDINALITY AS key(opclass_oid, position)
            JOIN pg_opclass AS opclass ON opclass.oid = key.opclass_oid
            ORDER BY key.position

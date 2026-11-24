@@ -10,6 +10,8 @@
     "start": "node server/index.js",
     "package": "node scripts/package.js",
     "db:bootstrap": "node db/bootstrap.js",
+    "db:bootstrap:keyword": "node db/bootstrap.js --keyword-only",
+    "db:bootstrap:embeddings": "node db/bootstrap.js --complete-embeddings",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

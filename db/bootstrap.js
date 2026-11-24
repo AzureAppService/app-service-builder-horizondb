@@ -19,7 +19,77 @@ function identifier(value) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
+function guideValues(guide) {
+  const text = [guide.code, guide.title, guide.category, guide.summary, guide.signals, ...guide.steps].join(' ');
+  return [guide.id, guide.code, guide.title, guide.category, guide.summary, guide.steps, text];
+}
+
+async function populateGuides(client, guides, phase) {
+  if (phase === 'complete') {
+    const existing = await client.query(`
+      SELECT id, code, title, category, summary, steps, search_text,
+             embedding IS NOT NULL AS embedded
+      FROM guide_finder.guides
+    `);
+    const rows = new Map(existing.rows.map((row) => [row.id, row]));
+    if (existing.rows.length !== guides.length || guides.some((guide) => {
+      const row = rows.get(guide.id);
+      return !row || row.embedded ||
+        JSON.stringify([row.id, row.code, row.title, row.category, row.summary, row.steps, row.search_text]) !==
+          JSON.stringify(guideValues(guide));
+    })) {
+      throw new Error('Embedding completion requires the unchanged, unembedded synthetic guide collection.');
+    }
+  } else {
+    await client.query('CREATE SCHEMA guide_finder');
+    await client.query('REVOKE ALL ON SCHEMA guide_finder FROM PUBLIC');
+    await client.query(`
+      CREATE TABLE guide_finder.guides (
+        id text PRIMARY KEY,
+        code text NOT NULL UNIQUE,
+        title text NOT NULL,
+        category text NOT NULL,
+        summary text NOT NULL,
+        steps text[] NOT NULL,
+        search_text text NOT NULL,
+        embedding vector(1536)
+      )
+    `);
+    for (const guide of guides) {
+      await client.query(`
+        INSERT INTO guide_finder.guides (id, code, title, category, summary, steps, search_text)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `, guideValues(guide));
+    }
+    await client.query(`
+      CREATE INDEX guides_search_bm25 ON guide_finder.guides USING bm25 (search_text)
+      WITH (text_config = 'english')
+    `);
+  }
+  if (phase !== 'keyword') {
+    for (const guide of guides) {
+      await client.query(`
+        UPDATE guide_finder.guides
+        SET embedding = ai.embed(text => search_text, model => 'default-embedding',
+          dimensions => 1536)::vector(1536)
+        WHERE id = $1
+      `, [guide.id]);
+    }
+    await client.query('ALTER TABLE guide_finder.guides ALTER COLUMN embedding SET NOT NULL');
+    await client.query(`
+      CREATE INDEX guides_embedding_diskann ON guide_finder.guides
+      USING diskann (embedding vector_cosine_ops)
+    `);
+  }
+}
+
 async function main() {
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length && !['--keyword-only', '--complete-embeddings'].includes(args[0]))) {
+    throw new Error('Use no option, --keyword-only, or --complete-embeddings.');
+  }
+  const phase = args[0] === '--keyword-only' ? 'keyword'
+    : args[0] === '--complete-embeddings' ? 'complete' : 'all';
   const config = databaseConfig(process.env);
   const adminUser = required('HORIZONDB_ADMIN_USER');
   const runtimeRole = required('HORIZONDB_RUNTIME_ROLE');
@@ -60,8 +130,11 @@ async function main() {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('guide_finder.bootstrap'))");
 
     const schema = await client.query("SELECT to_regnamespace('guide_finder') IS NOT NULL AS exists");
-    if (schema.rows[0].exists) {
+    if (schema.rows[0].exists && phase !== 'complete') {
       throw new Error('The guide_finder schema already exists. Bootstrap will not overwrite it.');
+    }
+    if (!schema.rows[0].exists && phase === 'complete') {
+      throw new Error('Run the keyword-only bootstrap before completing embeddings.');
     }
 
     const role = await client.query(`
@@ -82,7 +155,9 @@ async function main() {
       throw new Error('pg_textsearch must be preloaded in the pool parameter group before bootstrap.');
     }
 
-    for (const extension of ['vector', 'pg_diskann', 'pg_textsearch', 'azure_ai']) {
+    const extensions = ['vector', 'pg_textsearch', 'azure_ai'];
+    if (phase !== 'keyword') extensions.push('pg_diskann');
+    for (const extension of extensions) {
       await client.query(`CREATE EXTENSION IF NOT EXISTS ${extension}`);
     }
     const searchFunction = await client.query(`
@@ -94,39 +169,8 @@ async function main() {
       throw new Error('This database does not expose ai.search; check the azure_ai version.');
     }
 
-    await client.query('CREATE SCHEMA guide_finder');
-    await client.query('REVOKE ALL ON SCHEMA guide_finder FROM PUBLIC');
-    await client.query(`
-      CREATE TABLE guide_finder.guides (
-        id text PRIMARY KEY,
-        code text NOT NULL UNIQUE,
-        title text NOT NULL,
-        category text NOT NULL,
-        summary text NOT NULL,
-        steps text[] NOT NULL,
-        search_text text NOT NULL,
-        embedding vector(1536) NOT NULL
-      )
-    `);
-
     const guides = JSON.parse(fs.readFileSync(path.join(__dirname, 'guides.json'), 'utf8'));
-    for (const guide of guides) {
-      const searchText = [guide.code, guide.title, guide.category, guide.summary, guide.signals, ...guide.steps].join(' ');
-      await client.query(`
-        INSERT INTO guide_finder.guides (id, code, title, category, summary, steps, search_text, embedding)
-        VALUES ($1, $2, $3, $4, $5, $6, $7,
-          ai.embed(text => $7::text, model => 'default-embedding', dimensions => 1536)::vector(1536))
-      `, [guide.id, guide.code, guide.title, guide.category, guide.summary, guide.steps, searchText]);
-    }
-
-    await client.query(`
-      CREATE INDEX guides_search_bm25 ON guide_finder.guides USING bm25 (search_text)
-      WITH (text_config = 'english')
-    `);
-    await client.query(`
-      CREATE INDEX guides_embedding_diskann ON guide_finder.guides
-      USING diskann (embedding vector_cosine_ops)
-    `);
+    await populateGuides(client, guides, phase);
     await client.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${roleName}`);
     await client.query(`GRANT USAGE ON SCHEMA guide_finder, ai TO ${roleName}`);
     await client.query(`GRANT SELECT ON guide_finder.guides TO ${roleName}`);
@@ -134,14 +178,16 @@ async function main() {
       GRANT EXECUTE ON FUNCTION ai.search(text, text, text, integer, integer, text, text, text, text, boolean)
       TO ${roleName}
     `);
-    await client.query(`
-      GRANT EXECUTE ON FUNCTION ai.embed(text, text, integer, integer, integer, integer) TO ${roleName}
-    `);
-    await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [
-      'default-embedding', [adminUser, runtimeRole]
-    ]);
-    for (const model of ['default-chat', 'default-reranker']) {
-      await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [model, [adminUser]]);
+    if (phase !== 'keyword') {
+      await client.query(`
+        GRANT EXECUTE ON FUNCTION ai.embed(text, text, integer, integer, integer, integer) TO ${roleName}
+      `);
+      await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [
+        'default-embedding', [adminUser, runtimeRole]
+      ]);
+      for (const model of ['default-chat', 'default-reranker']) {
+        await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [model, [adminUser]]);
+      }
     }
 
     const verification = await client.query(`
@@ -151,13 +197,14 @@ async function main() {
       FROM guide_finder.guides
     `);
     const counts = verification.rows[0];
-    if (counts.total !== guides.length || counts.embedded !== guides.length ||
-        counts.min_dimensions !== 1536 || counts.max_dimensions !== 1536) {
+    if (counts.total !== guides.length ||
+        (phase === 'keyword' ? counts.embedded !== 0 :
+          counts.embedded !== guides.length || counts.min_dimensions !== 1536 || counts.max_dimensions !== 1536)) {
       throw new Error('Embedding verification did not match the synthetic guide collection.');
     }
     await client.query('COMMIT');
     inTransaction = false;
-    console.log(`Installed ${counts.total} synthetic guides with BM25 and DiskANN indexes.`);
+    console.log(`Installed ${counts.total} synthetic guides with ${phase === 'keyword' ? 'BM25 only; embeddings remain NULL' : 'BM25 and DiskANN indexes'}.`);
     console.log('Verify both retrieval modes and permissions using the attached runtime identity.');
   } catch (error) {
     if (connected && inTransaction) {
@@ -173,7 +220,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error('Bootstrap failed:', error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Bootstrap failed:', error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { populateGuides };
