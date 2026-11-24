@@ -1,0 +1,10 @@
+components:
+  - name: web
+    role: web
+    platform: nodejs
+    platformVersion: "24"
+    build: npm ci --omit=dev && npm run package
+    run:
+      start: node server/index.js
+      port: 8080
+      healthCheckPath: /health

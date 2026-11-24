@@ -1,0 +1,184 @@
+[
+  {
+    "id": "pool-wait",
+    "code": "DEMO-104",
+    "title": "Requests wait for a free database session",
+    "category": "Connections",
+    "summary": "A fictional connection pool has no available sessions, and requests stall during a traffic spike.",
+    "signals": "connection pool exhausted checkout timeout slow requests sessions occupied concurrency spike",
+    "steps": [
+      "Check the number of active and idle sessions alongside the application's pool limit.",
+      "Look for work that holds a session longer than expected, then release connections promptly.",
+      "Reassess pool size and workload capacity before increasing either limit."
+    ]
+  },
+  {
+    "id": "tls-name",
+    "code": "DEMO-207",
+    "title": "A TLS certificate does not match the database host",
+    "category": "Security",
+    "summary": "A fictional client rejects the encrypted connection because the hostname and certificate do not agree.",
+    "signals": "TLS handshake certificate hostname mismatch SSL verify connection",
+    "steps": [
+      "Compare the configured hostname with the service's published endpoint.",
+      "Check the client trust store and certificate chain without disabling certificate validation.",
+      "Retry with the correct DNS name and verify the resulting connection."
+    ]
+  },
+  {
+    "id": "identity-login",
+    "code": "DEMO-403",
+    "title": "A managed identity is rejected at sign-in",
+    "category": "Identity",
+    "summary": "A fictional workload cannot sign in after its user-assigned identity is changed.",
+    "signals": "authentication login failed Entra managed identity principal role token permission denied",
+    "steps": [
+      "Confirm the intended identity is attached to the application and selected by client ID.",
+      "Check the token audience and the database principal mapped to that identity.",
+      "Verify the principal has only the required database and model permissions."
+    ]
+  },
+  {
+    "id": "rate-limit",
+    "code": "DEMO-429",
+    "title": "An upstream service asks clients to slow down",
+    "category": "Capacity",
+    "summary": "A fictional dependency responds with a rate-limit error during a burst of requests.",
+    "signals": "429 throttling retry after too many requests quota burst",
+    "steps": [
+      "Inspect the dependency's rate-limit response and retry guidance.",
+      "Reduce concurrent calls and use bounded backoff where the operation can safely be retried.",
+      "Review usage and capacity before requesting a limit change."
+    ]
+  },
+  {
+    "id": "deployment-health",
+    "code": "DEMO-502",
+    "title": "A new release does not pass its health check",
+    "category": "Deployments",
+    "summary": "A fictional deployment completes, but the application endpoint remains unhealthy.",
+    "signals": "502 bad gateway deploy release health probe startup port listener",
+    "steps": [
+      "Compare the configured health path and listener port with the application's actual settings.",
+      "Review startup logs for a missing setting or a process that exited.",
+      "Test the health endpoint again after making a targeted correction."
+    ]
+  },
+  {
+    "id": "dns-lookup",
+    "code": "DEMO-105",
+    "title": "The service name cannot be resolved",
+    "category": "Networking",
+    "summary": "A fictional client cannot turn a service hostname into an address.",
+    "signals": "DNS lookup failed name resolution hostname network endpoint",
+    "steps": [
+      "Check the endpoint name for spelling mistakes and unexpected suffixes.",
+      "Inspect DNS resolution from the same network as the affected workload.",
+      "Compare public and private endpoint configuration before changing network rules."
+    ]
+  },
+  {
+    "id": "idle-disconnect",
+    "code": "DEMO-106",
+    "title": "An idle connection closes before it is reused",
+    "category": "Connections",
+    "summary": "A fictional application sees intermittent connection failures after long quiet periods.",
+    "signals": "idle connection dropped reset broken pipe reuse socket timeout",
+    "steps": [
+      "Compare connection idle times with the timeouts along the network path.",
+      "Configure the client pool to retire or validate idle connections appropriately.",
+      "Observe a fresh connection after the workload has been idle."
+    ]
+  },
+  {
+    "id": "slow-query",
+    "code": "DEMO-107",
+    "title": "A query becomes slow as the collection grows",
+    "category": "Performance",
+    "summary": "A fictional query scans more records than expected after the dataset grows.",
+    "signals": "slow SQL query execution plan scan index latency database performance",
+    "steps": [
+      "Capture the query plan and identify the expensive operation.",
+      "Compare existing indexes with the predicates and ordering used by the query.",
+      "Measure the effect of a reviewed change using representative synthetic data."
+    ]
+  },
+  {
+    "id": "cold-start",
+    "code": "DEMO-108",
+    "title": "The first request after inactivity is slow",
+    "category": "Runtime",
+    "summary": "A fictional app takes longer to respond while a new instance starts.",
+    "signals": "cold start startup latency first request after idle warm instance",
+    "steps": [
+      "Separate startup time from time spent in external dependencies.",
+      "Inspect initialization work and remove unnecessary blocking operations.",
+      "Compare the result with the hosting plan's warm-instance settings."
+    ]
+  },
+  {
+    "id": "memory-pressure",
+    "code": "DEMO-109",
+    "title": "An instance restarts under memory pressure",
+    "category": "Capacity",
+    "summary": "A fictional application repeatedly restarts while processing larger workloads.",
+    "signals": "memory out of memory OOM restart heap process killed load",
+    "steps": [
+      "Correlate restarts with memory use, request volume, and deployment changes.",
+      "Check whether buffers, caches, or concurrent work grow without a bound.",
+      "Reduce pressure or choose sufficient capacity, then observe the instance."
+    ]
+  },
+  {
+    "id": "missing-telemetry",
+    "code": "DEMO-110",
+    "title": "Expected request telemetry is missing",
+    "category": "Observability",
+    "summary": "A fictional dashboard shows fewer application events than expected.",
+    "signals": "logs traces telemetry missing monitoring sampling instrumentation",
+    "steps": [
+      "Confirm the application is configured to send telemetry to the intended destination.",
+      "Inspect sampling, filtering, and ingestion delays before changing instrumentation.",
+      "Send a synthetic request and trace it through the expected pipeline."
+    ]
+  },
+  {
+    "id": "firewall",
+    "code": "DEMO-111",
+    "title": "Network policy blocks a database connection",
+    "category": "Networking",
+    "summary": "A fictional workload times out because its network path is not permitted.",
+    "signals": "firewall denied network access connection timeout outbound address private endpoint",
+    "steps": [
+      "Identify the workload's actual network path and destination.",
+      "Review the smallest approved network rule or private connectivity option.",
+      "Test reachability and authentication separately; network access alone does not grant database access."
+    ]
+  },
+  {
+    "id": "stale-cache",
+    "code": "DEMO-112",
+    "title": "A cached response shows old information",
+    "category": "Data",
+    "summary": "A fictional client keeps seeing an earlier response after a record changes.",
+    "signals": "cache stale old data invalidation TTL response",
+    "steps": [
+      "Identify each cache between the data source and the client.",
+      "Check expiration and invalidation behavior for the affected entry.",
+      "Verify a new synthetic update reaches the client after the change."
+    ]
+  },
+  {
+    "id": "storage-space",
+    "code": "DEMO-113",
+    "title": "A workload runs short of temporary storage",
+    "category": "Runtime",
+    "summary": "A fictional process cannot write a temporary file because its available space is low.",
+    "signals": "disk full temporary storage no space write file",
+    "steps": [
+      "Measure temporary storage use and identify the files responsible.",
+      "Review retention and cleanup behavior without removing unrelated files.",
+      "Bound temporary output and validate the workload with adequate capacity."
+    ]
+  }
+]

@@ -1,0 +1,179 @@
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { AzureCliCredential } = require('@azure/identity');
+const { Client } = require('pg');
+const { databaseConfig } = require('../server/database');
+
+function required(name) {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required.`);
+  return value;
+}
+
+function identifier(value) {
+  if (!value || value.includes('\0') || Buffer.byteLength(value, 'utf8') > 63) {
+    throw new Error('Database and role identifiers must be between 1 and 63 bytes.');
+  }
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+async function main() {
+  const config = databaseConfig(process.env);
+  const adminUser = required('HORIZONDB_ADMIN_USER');
+  const runtimeRole = required('HORIZONDB_RUNTIME_ROLE');
+  if (required('HORIZONDB_CONFIRM_DATABASE') !== config.database) {
+    throw new Error('HORIZONDB_CONFIRM_DATABASE must exactly match the dedicated database name.');
+  }
+  if (config.user !== runtimeRole) {
+    throw new Error('HORIZONDB_USER must match the mapped HORIZONDB_RUNTIME_ROLE.');
+  }
+  const databaseName = identifier(config.database);
+  const roleName = identifier(runtimeRole);
+  const credential = new AzureCliCredential();
+  const client = new Client({
+    host: config.host,
+    port: 5432,
+    database: config.database,
+    user: adminUser,
+    password: async () => {
+      const token = await credential.getToken(config.scope, { abortSignal: AbortSignal.timeout(10000) });
+      if (!token || token.expiresOnTimestamp <= Date.now() + 30000) {
+        throw new Error('Azure CLI did not return a usable administrator token.');
+      }
+      return token.token;
+    },
+    ssl: { rejectUnauthorized: true },
+    application_name: 'horizon-guide-bootstrap',
+    connectionTimeoutMillis: 10000,
+    statement_timeout: 90000
+  });
+  let connected = false;
+  let inTransaction = false;
+  try {
+    await client.connect();
+    connected = true;
+    await client.query('BEGIN');
+    inTransaction = true;
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('guide_finder.bootstrap'))");
+
+    const schema = await client.query("SELECT to_regnamespace('guide_finder') IS NOT NULL AS exists");
+    if (schema.rows[0].exists) {
+      throw new Error('The guide_finder schema already exists. Bootstrap will not overwrite it.');
+    }
+
+    const role = await client.query(`
+      SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication,
+             COALESCE(pg_has_role(oid, to_regrole('azure_pg_admin'), 'MEMBER'), false) AS is_admin
+      FROM pg_roles WHERE rolname = $1
+    `, [runtimeRole]);
+    if (role.rowCount !== 1 || !role.rows[0].rolcanlogin) {
+      throw new Error('The mapped managed-identity database login does not exist.');
+    }
+    if (role.rows[0].rolsuper || role.rows[0].rolcreatedb || role.rows[0].rolcreaterole ||
+        role.rows[0].rolreplication || role.rows[0].is_admin) {
+      throw new Error('The runtime database login has elevated privileges; use a least-privilege principal.');
+    }
+
+    const preload = await client.query("SHOW shared_preload_libraries");
+    if (!preload.rows[0].shared_preload_libraries.split(',').some((item) => item.trim() === 'pg_textsearch')) {
+      throw new Error('pg_textsearch must be preloaded in the pool parameter group before bootstrap.');
+    }
+
+    for (const extension of ['vector', 'pg_diskann', 'pg_textsearch', 'azure_ai']) {
+      await client.query(`CREATE EXTENSION IF NOT EXISTS ${extension}`);
+    }
+    const searchFunction = await client.query(`
+      SELECT count(*)::integer AS count
+      FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'ai' AND p.proname = 'search'
+    `);
+    if (!searchFunction.rows[0].count) {
+      throw new Error('This database does not expose ai.search; check the azure_ai version.');
+    }
+
+    await client.query('CREATE SCHEMA guide_finder');
+    await client.query('REVOKE ALL ON SCHEMA guide_finder FROM PUBLIC');
+    await client.query(`
+      CREATE TABLE guide_finder.guides (
+        id text PRIMARY KEY,
+        code text NOT NULL UNIQUE,
+        title text NOT NULL,
+        category text NOT NULL,
+        summary text NOT NULL,
+        steps text[] NOT NULL,
+        search_text text NOT NULL,
+        embedding vector(1536) NOT NULL
+      )
+    `);
+
+    const guides = JSON.parse(fs.readFileSync(path.join(__dirname, 'guides.json'), 'utf8'));
+    for (const guide of guides) {
+      const searchText = [guide.code, guide.title, guide.category, guide.summary, guide.signals, ...guide.steps].join(' ');
+      await client.query(`
+        INSERT INTO guide_finder.guides (id, code, title, category, summary, steps, search_text, embedding)
+        VALUES ($1, $2, $3, $4, $5, $6, $7,
+          ai.embed(text => $7::text, model => 'default-embedding', dimensions => 1536)::vector(1536))
+      `, [guide.id, guide.code, guide.title, guide.category, guide.summary, guide.steps, searchText]);
+    }
+
+    await client.query(`
+      CREATE INDEX guides_search_bm25 ON guide_finder.guides USING bm25 (search_text)
+      WITH (text_config = 'english')
+    `);
+    await client.query(`
+      CREATE INDEX guides_embedding_diskann ON guide_finder.guides
+      USING diskann (embedding vector_cosine_ops)
+    `);
+    await client.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${roleName}`);
+    await client.query(`GRANT USAGE ON SCHEMA guide_finder, ai TO ${roleName}`);
+    await client.query(`GRANT SELECT ON guide_finder.guides TO ${roleName}`);
+    await client.query(`
+      GRANT EXECUTE ON FUNCTION ai.search(text, text, text, integer, integer, text, text, text, text, boolean)
+      TO ${roleName}
+    `);
+    await client.query(`
+      GRANT EXECUTE ON FUNCTION ai.embed(text, text, integer, integer, integer, integer) TO ${roleName}
+    `);
+    await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [
+      'default-embedding', [adminUser, runtimeRole]
+    ]);
+    for (const model of ['default-chat', 'default-reranker']) {
+      await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [model, [adminUser]]);
+    }
+
+    const verification = await client.query(`
+      SELECT count(*)::integer AS total, count(embedding)::integer AS embedded,
+             min(vector_dims(embedding)) AS min_dimensions,
+             max(vector_dims(embedding)) AS max_dimensions
+      FROM guide_finder.guides
+    `);
+    const counts = verification.rows[0];
+    if (counts.total !== guides.length || counts.embedded !== guides.length ||
+        counts.min_dimensions !== 1536 || counts.max_dimensions !== 1536) {
+      throw new Error('Embedding verification did not match the synthetic guide collection.');
+    }
+    await client.query('COMMIT');
+    inTransaction = false;
+    console.log(`Installed ${counts.total} synthetic guides with BM25 and DiskANN indexes.`);
+    console.log('Verify both retrieval modes and permissions using the attached runtime identity.');
+  } catch (error) {
+    if (connected && inTransaction) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Rollback failed:', rollbackError.code || rollbackError.message);
+      }
+    }
+    throw error;
+  } finally {
+    if (connected) await client.end();
+  }
+}
+
+main().catch((error) => {
+  console.error('Bootstrap failed:', error.message);
+  process.exitCode = 1;
+});

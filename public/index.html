@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#122a5b">
+    <title>Fieldnotes | HorizonDB guide finder</title>
+    <meta name="description" content="Compare keyword and hybrid search across synthetic troubleshooting guides.">
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="/" aria-label="Fieldnotes home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M7 8.5h8.5v8.5H7zM17.5 8.5H25v7.5h-7.5zM7 19h8.5v5H7zM17.5 18H25v7h-7.5z" fill="currentColor"/>
+            </svg>
+          </span>
+          <span class="brand-name">fieldnotes<span class="brand-period">.</span></span>
+        </a>
+        <span class="header-divider" aria-hidden="true"></span>
+        <span class="header-product">HorizonDB sample</span>
+        <nav class="header-nav" aria-label="Main navigation">
+          <a href="#how-it-works">How it works</a>
+          <span class="dataset-pill"><span aria-hidden="true"></span> Synthetic guides</span>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-orb hero-orb-one" aria-hidden="true"></div>
+        <div class="hero-orb hero-orb-two" aria-hidden="true"></div>
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <p class="eyebrow"><span aria-hidden="true"></span> A FIELD SUPPORT WORKSPACE</p>
+            <h1 id="hero-title">Get to the right<br><span>guide, faster.</span></h1>
+            <p class="hero-description">
+              Search a collection of fictional troubleshooting guides by error code or describe the symptom in your own words.
+            </p>
+
+            <form id="search-form" class="search-form" role="search" novalidate>
+              <label for="query">What are you trying to solve?</label>
+              <div class="search-box">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="10.8" cy="10.8" r="6.3" stroke="currentColor" stroke-width="1.8"/>
+                  <path d="m15.4 15.4 4.1 4.1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
+                <input id="query" name="query" type="search" maxlength="180" autocomplete="off"
+                  placeholder="Try DEMO-104 or describe a symptom" aria-describedby="search-help">
+                <button class="search-button" type="submit">
+                  Search guides <span aria-hidden="true">&#8594;</span>
+                </button>
+              </div>
+              <p id="search-help" class="search-help">
+                Use synthetic examples only. Your query is sent to HorizonDB and its embedding model.
+              </p>
+            </form>
+
+            <div class="examples" aria-label="Example searches">
+              <span>Try an example</span>
+              <button type="button" data-example="DEMO-104">DEMO-104</button>
+              <button type="button" data-example="TLS handshake fails">TLS handshake fails</button>
+              <button type="button" data-example="requests wait for a free session">Waiting for a session</button>
+            </div>
+          </div>
+
+          <div class="hero-illustration" aria-hidden="true">
+            <div class="illustration-card">
+              <div class="illustration-head">
+                <span class="illustration-icon">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path d="M7 4.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V6a1.5 1.5 0 0 1 1-1.5Z" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M14 4.5V9h4M9 13h6M9 16h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                </span>
+                <span class="illustration-label">YOUR SEARCH, IN CONTEXT</span>
+                <span class="illustration-dots">&#8226; &#8226; &#8226;</span>
+              </div>
+              <div class="illustration-query"><span class="tiny-search"></span> A symptom or error code</div>
+              <div class="illustration-result">
+                <span class="result-symbol keyword-symbol">Aa</span>
+                <span><strong>Keyword</strong><small>Find the exact terms</small></span>
+                <span class="illustration-arrow">&#8599;</span>
+              </div>
+              <div class="illustration-result">
+                <span class="result-symbol hybrid-symbol">&#10022;</span>
+                <span><strong>Hybrid</strong><small>Connect words and meaning</small></span>
+                <span class="illustration-arrow">&#8599;</span>
+              </div>
+              <div class="illustration-footer"><span></span> POWERED BY AZURE HORIZONDB</div>
+            </div>
+            <div class="floating-tag"><span>&#10022;</span> Two ways to discover</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace" aria-labelledby="results-title">
+        <div class="workspace-heading">
+          <div>
+            <p class="section-eyebrow">SEARCH, SIDE BY SIDE</p>
+            <h2 id="results-title">Two perspectives. One search.</h2>
+            <p>Compare exact language with related meaning to find a useful starting point.</p>
+          </div>
+          <span class="comparison-note"><span aria-hidden="true">&#9673;</span> Live comparison</span>
+        </div>
+
+        <p id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+        <div class="results-grid">
+          <section class="result-panel" aria-labelledby="keyword-title">
+            <div class="panel-heading">
+              <span class="panel-icon keyword-icon" aria-hidden="true">Aa</span>
+              <div>
+                <h3 id="keyword-title">Keyword matches</h3>
+                <p>Find the words and codes you used</p>
+              </div>
+              <span class="mode-tag">BM25</span>
+            </div>
+            <div id="keyword-results" class="panel-content">
+              <div class="empty-state initial-state">
+                <span class="empty-icon" aria-hidden="true">&#8981;</span>
+                <h4>Start with a search</h4>
+                <p>Keyword results will appear here when the database is available.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="result-panel" aria-labelledby="hybrid-title">
+            <div class="panel-heading">
+              <span class="panel-icon hybrid-icon" aria-hidden="true">&#10022;</span>
+              <div>
+                <h3 id="hybrid-title">Hybrid matches</h3>
+                <p>Find related meaning as well as words</p>
+              </div>
+              <span class="mode-tag hybrid-tag">BM25 + vector</span>
+            </div>
+            <div id="hybrid-results" class="panel-content">
+              <div class="empty-state initial-state">
+                <span class="empty-icon hybrid-empty" aria-hidden="true">&#10022;</span>
+                <h4>See another angle</h4>
+                <p>Hybrid results will appear here alongside the keyword matches.</p>
+              </div>
+            </div>
+          </section>
+        </div>
+        <p class="results-footnote">Scores rank results within each list; they are not comparable across search modes.</p>
+      </section>
+
+      <section id="how-it-works" class="about" aria-labelledby="about-title">
+        <div class="about-icon" aria-hidden="true">i</div>
+        <div>
+          <h2 id="about-title">A little more about the search</h2>
+          <p>
+            Keyword search uses a BM25 index. Hybrid search combines keyword and vector rankings with reciprocal rank fusion,
+            without a reranker. Match labels describe the contributions observed in returned results; a successful hybrid query
+            alone does not prove that both retrieval paths contributed.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span><strong>fieldnotes.</strong> <span class="footer-divider">/</span> An Azure HorizonDB sample</span>
+      <span>Fictional data for demonstration only</span>
+    </footer>
+  </body>
+</html>
