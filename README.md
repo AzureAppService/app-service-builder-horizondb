@@ -2,7 +2,7 @@
 
 Fieldnotes compares keyword and hybrid retrieval over fictional field-support guides. It is a Node.js sample for Azure HorizonDB and App Service Builder, not a production troubleshooting service. Use synthetic data and queries only.
 
-> **Preview status:** On a dedicated test cluster, a Builder-hosted app signed in to HorizonDB with its user-assigned managed identity and returned real keyword (`fulltext`) matches. A disabled database login and a missing app identity both produced explicit errors. Managed models are ready in `postgres`; a scoped-role test there returned `vector+fulltext` hybrid matches, including a guide independently returned by both retrieval modes. The hosted app still uses the separate `fieldnotes` database, so hosted hybrid remains unverified until its configuration and AppVersion are updated.
+> **Preview status:** On a dedicated test cluster, a Builder-hosted app signed in to HorizonDB with its user-assigned managed identity and returned real keyword (`fulltext`) and hybrid matches from the `guide_finder` schema in `postgres`. Hybrid results included both `vector+fulltext` guides and `vector`-only guides that keyword search did not return. A disabled database login and a missing app identity both produced explicit errors.
 
 ## What it does
 
@@ -65,6 +65,8 @@ The keyword stage creates the schema, 14 synthetic text guides, a BM25 index and
 On the test cluster with managed models disabled, `DEMO-104` and `requests wait for a free session` both ranked the synthetic pool-wait guide first with `match_type=fulltext`; a nonexistent term returned no guides. The mapped role could select but had no insert, update, delete, schema-create or database-create permissions. Hybrid correctly reported its missing DiskANN index.
 
 The same checks passed through the Builder-hosted app using its managed identity. When an administrator set the runtime login to `NOLOGIN`, search returned HTTP 503 with `identity_or_permission`. With no identity attached to the app, it returned HTTP 503 with the generic `unavailable` code; token-acquisition failures are not yet distinguished from other outages. These checks do not establish semantic retrieval quality.
+
+After managed models were enabled and the app was redeployed with `HORIZONDB_DATABASE=postgres`, the hosted app returned hybrid results through the same managed identity. For `app keeps forgetting who I am after restart`, keyword search returned three `fulltext` guides; hybrid returned those three as `vector+fulltext` plus two `vector`-only guides. `DEMO-104` still ranked the pool-wait guide first in keyword search.
 
 The runtime login must already exist and must not have administrator, role-creation, database-creation, superuser, or replication privileges. Bootstrap refuses to overwrite an existing `guide_finder` schema. It creates extensions when allowed, inserts 14 synthetic guides and their embeddings, creates BM25 and DiskANN indexes, and grants the runtime principal schema usage and guide `SELECT`. In `postgres` it requires existing connection, `ai` schema, and search/embedding function privileges and will not grant them; for a separate database it grants those permissions. It changes managed-model user lists for the database: the embedding model is limited to the administrator and runtime login, while the managed chat and reranking models are limited to the administrator. Other users lose access to those models. **Do not run it against a shared cluster or database.** Review existing model access and service-side effects first.
 
