@@ -2,8 +2,52 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { populateGuides } = require('../db/bootstrap');
+const { configureModelUsers, populateGuides, requireExistingRuntimeAccess } = require('../db/bootstrap');
 const guides = require('../db/guides.json');
+
+function managedModels() {
+  return ['default-embedding', 'default-chat', 'default-reranker'].map((alias) => ({
+    alias, registry_type: 'Managed Model', status: 'registered'
+  }));
+}
+
+test('model setup refuses missing or unready managed aliases before changing access', async () => {
+  for (const rows of [
+    managedModels().slice(1),
+    managedModels().map((model, i) => i ? model : { ...model, status: 'pending' })
+  ]) {
+    let calls = 0;
+    await assert.rejects(configureModelUsers({ query: async () => {
+      calls++;
+      return { rows };
+    } }, 'admin', 'reader'), /Managed models are not registered.*default-embedding/);
+    assert.equal(calls, 1);
+  }
+});
+
+test('model setup restricts embedding to the runtime and admin, and other models to the admin', async () => {
+  const calls = [];
+  await configureModelUsers({ query: async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: managedModels() };
+  } }, 'admin', 'reader');
+  assert.deepEqual(calls.slice(1).map((call) => call.values), [
+    ['default-embedding', ['admin', 'reader']],
+    ['default-chat', ['admin']],
+    ['default-reranker', ['admin']]
+  ]);
+});
+
+test('postgres setup requires existing runtime privileges instead of granting outside the sample schema', async () => {
+  const privileges = { can_connect: true, can_use_ai: true, can_search: true, can_embed: true };
+  const client = { query: async () => ({ rows: [privileges] }) };
+  await requireExistingRuntimeAccess(client, 'reader', true);
+  for (const missing of Object.keys(privileges)) {
+    await assert.rejects(requireExistingRuntimeAccess({
+      query: async () => ({ rows: [{ ...privileges, [missing]: false }] })
+    }, 'reader', true), /existing database and AI function access/);
+  }
+});
 
 function existingRows() {
   return guides.map((guide) => ({

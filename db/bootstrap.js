@@ -24,6 +24,41 @@ function guideValues(guide) {
   return [guide.id, guide.code, guide.title, guide.category, guide.summary, guide.steps, text];
 }
 
+async function configureModelUsers(client, adminUser, runtimeRole) {
+  const aliases = ['default-embedding', 'default-chat', 'default-reranker'];
+  const models = await client.query(`
+    SELECT alias, registry_type, status
+    FROM model_registry.model_list_all()
+    WHERE alias = ANY($1::text[])
+  `, [aliases]);
+  const unavailable = aliases.filter((alias) => !models.rows.some((model) =>
+    model.alias === alias && model.registry_type === 'Managed Model' && model.status === 'registered'));
+  if (unavailable.length) {
+    throw new Error(`Managed models are not registered in this database: ${unavailable.join(', ')}.`);
+  }
+  await client.query('SELECT model_registry.model_user_set($1::text, $2::text[])', [
+    'default-embedding', [adminUser, runtimeRole]
+  ]);
+  for (const model of ['default-chat', 'default-reranker']) {
+    await client.query('SELECT model_registry.model_user_set($1::text, $2::text[])', [model, [adminUser]]);
+  }
+}
+
+async function requireExistingRuntimeAccess(client, runtimeRole, includeEmbedding) {
+  const access = await client.query(`
+    SELECT has_database_privilege($1, current_database(), 'CONNECT') AS can_connect,
+           has_schema_privilege($1, 'ai', 'USAGE') AS can_use_ai,
+           has_function_privilege($1,
+             'ai.search(text,text,text,integer,integer,text,text,text,text,boolean)', 'EXECUTE') AS can_search,
+           CASE WHEN $2::boolean THEN has_function_privilege($1,
+             'ai.embed(text,text,integer,integer,integer,integer)', 'EXECUTE') ELSE true END AS can_embed
+  `, [runtimeRole, includeEmbedding]);
+  const { can_connect, can_use_ai, can_search, can_embed } = access.rows[0];
+  if (!can_connect || !can_use_ai || !can_search || !can_embed) {
+    throw new Error('The runtime role needs existing database and AI function access in postgres; bootstrap will not grant it.');
+  }
+}
+
 async function populateGuides(client, guides, phase) {
   if (phase === 'complete') {
     const existing = await client.query(`
@@ -168,25 +203,28 @@ async function main() {
     if (!searchFunction.rows[0].count) {
       throw new Error('This database does not expose ai.search; check the azure_ai version.');
     }
+    if (config.database === 'postgres') {
+      await requireExistingRuntimeAccess(client, runtimeRole, phase !== 'keyword');
+    }
+    if (phase !== 'keyword') {
+      await configureModelUsers(client, adminUser, runtimeRole);
+    }
 
     const guides = JSON.parse(fs.readFileSync(path.join(__dirname, 'guides.json'), 'utf8'));
     await populateGuides(client, guides, phase);
-    await client.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${roleName}`);
-    await client.query(`GRANT USAGE ON SCHEMA guide_finder, ai TO ${roleName}`);
+    await client.query(`GRANT USAGE ON SCHEMA guide_finder TO ${roleName}`);
     await client.query(`GRANT SELECT ON guide_finder.guides TO ${roleName}`);
-    await client.query(`
-      GRANT EXECUTE ON FUNCTION ai.search(text, text, text, integer, integer, text, text, text, text, boolean)
-      TO ${roleName}
-    `);
-    if (phase !== 'keyword') {
+    if (config.database !== 'postgres') {
+      await client.query(`GRANT CONNECT ON DATABASE ${databaseName} TO ${roleName}`);
+      await client.query(`GRANT USAGE ON SCHEMA ai TO ${roleName}`);
       await client.query(`
-        GRANT EXECUTE ON FUNCTION ai.embed(text, text, integer, integer, integer, integer) TO ${roleName}
+        GRANT EXECUTE ON FUNCTION ai.search(text, text, text, integer, integer, text, text, text, text, boolean)
+        TO ${roleName}
       `);
-      await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [
-        'default-embedding', [adminUser, runtimeRole]
-      ]);
-      for (const model of ['default-chat', 'default-reranker']) {
-        await client.query("SELECT model_registry.model_user_set($1::text, $2::text[])", [model, [adminUser]]);
+      if (phase !== 'keyword') {
+        await client.query(`
+          GRANT EXECUTE ON FUNCTION ai.embed(text, text, integer, integer, integer, integer) TO ${roleName}
+        `);
       }
     }
 
@@ -227,4 +265,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { populateGuides };
+module.exports = { configureModelUsers, populateGuides, requireExistingRuntimeAccess };
