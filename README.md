@@ -27,7 +27,7 @@ Builder Connections does not currently configure HorizonDB for this sample. Conf
 
 | Setting | Meaning |
 | --- | --- |
-| `HORIZONDB_HOST` | HorizonDB read endpoint hostname, ending in `.horizondb.azure.com` |
+| `HORIZONDB_HOST` | HorizonDB endpoint hostname, ending in `.horizondb.azure.com`: read/write for administrator bootstrap; read-only for the running app |
 | `HORIZONDB_DATABASE` | Database containing the sample schema and managed model aliases; `postgres` on the tested dedicated cluster |
 | `HORIZONDB_USER` | Exact database login mapped to the app's managed identity |
 | `AZURE_CLIENT_ID` | Client ID of the user-assigned identity attached to the app |
@@ -36,6 +36,12 @@ Builder Connections does not currently configure HorizonDB for this sample. Conf
 The tested HorizonDB Connect page prescribes `az account get-access-token --resource-type oss-rdbms`, resolving in AzureCloud to `https://ossrdbms-aad.database.windows.net`. Set the corresponding scope to `https://ossrdbms-aad.database.windows.net/.default` after checking your cluster's current guidance. On the tested cluster, `pgaadauth` 1.12 exposes `pgaadauth_create_principal_with_oid(rolename text, objectid text, objecttype text, isadmin boolean, ismfa boolean, tenantid text, skipvalidation boolean)`. An administrator created the application login in `postgres` using its verified managed-identity **principal/object ID**, type `service`, both privilege flags false, the verified tenant ID and `skipvalidation=false`. The Builder-hosted app subsequently used that identity for keyword search in `fieldnotes`. Inspect the installed signature before applying it elsewhere; never disable directory validation to hide an error. The runtime intentionally has no guessed default scope, password fallback or developer-credential fallback.
 
 ## Bootstrap the dedicated cluster
+
+Use the cluster's **read/write endpoint** for every bootstrap stage: setup creates
+the schema, inserts guides, and builds indexes. A read-only endpoint can route to
+a reader and reject these writes. Copy the appropriate endpoint from the
+cluster's **Connect** page; see [connection endpoints](https://learn.microsoft.com/azure/horizondb/connectivity/concepts-connection-endpoints).
+The application can use the read-only endpoint after bootstrap.
 
 Run bootstrap as a separately authorized HorizonDB Entra administrator from an approved network location, such as an Azure-hosted administration environment permitted by the cluster's firewall. For hybrid setup, verify the three managed aliases with `model_registry.model_list_all()` in the target database. On the tested cluster, the Entra administrator also needed membership in `model_registry_manager` to restrict the managed models, even though it was an `azure_pg_admin` member. An authorized administrator can grant it as documented:
 
@@ -46,6 +52,7 @@ GRANT model_registry_manager TO "<Entra administrator database login>";
 PostgreSQL role membership applies across the cluster and persists after bootstrap. Do not grant this role to the app identity. Install dependencies with `npm ci`, sign in to Azure CLI as the administrator, and set the variables above plus:
 
 ```sh
+export HORIZONDB_HOST="<cluster read/write endpoint hostname>"
 export HORIZONDB_ADMIN_USER="<Entra administrator database login>"
 export HORIZONDB_RUNTIME_ROLE="$HORIZONDB_USER"
 export HORIZONDB_CONFIRM_DATABASE="$HORIZONDB_DATABASE"
@@ -59,6 +66,11 @@ npm run db:bootstrap:keyword
 # After the user accepts model terms and the managed models are ready:
 npm run db:bootstrap:embeddings
 ```
+
+Keep the read/write endpoint selected for `db:bootstrap:keyword` and
+`db:bootstrap:embeddings` too. After setup, configure the app (or the shell used
+for `npm start`) with `HORIZONDB_HOST="<cluster read-only endpoint hostname>"`;
+keep the same target database, runtime login, client ID, and token scope.
 
 The keyword stage creates the schema, 14 synthetic text guides, a BM25 index and search permissions. Embeddings remain SQL NULL; it creates no DiskANN index, calls no models and changes no model user lists. Hybrid search explicitly reports its missing vector index. Embedding completion requires the exact unchanged, entirely unembedded synthetic collection; it refuses modified or partial data, generates real vectors, enforces non-null embeddings and creates DiskANN. It does not overwrite or reseed existing text. Hybrid bootstrap checks model registration and applies the model user lists before embedding calls. Each stage is transactional, though an aborted embedding transaction may still incur inference charges.
 
